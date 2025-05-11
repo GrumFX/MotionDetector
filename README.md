@@ -124,4 +124,4 @@ The ESP32 will publish every 500 ms to topic `motion/esp32/1` with payload `"S
 
 
 ---
-
+Pushed everything into main so this is the only change for pull request
