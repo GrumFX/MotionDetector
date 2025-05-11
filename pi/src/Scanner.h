@@ -1,0 +1,17 @@
+#pragma once
+#include <vector>
+#include <string>
+
+struct Measurement
+{
+    std::string timeStamp;
+    std::string source;   // "pi" ??? "esp32/ID"
+    double      rssi;     // ? dBm
+};
+
+class Scanner
+{
+public:
+    // ?????? wlan0, ???????? ?????? ??????? ? source="pi"
+    std::vector<Measurement> scan();
+};
