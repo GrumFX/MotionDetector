@@ -4,10 +4,10 @@
 #include <fstream>
 #include <atomic>
 #include <thread>
-#include <vector>
 #include <mutex>
+#include <ctime>
 
-// CSV??????
+// Thread-safe CSV + console logger
 class FileLogger
 {
     std::mutex mu;
@@ -16,44 +16,53 @@ public:
     FileLogger(const std::string& fname)
     {
         ofs.open(fname, std::ios::out);
-        ofs << "timestamp,source,rssi\n";
+        ofs << "timestamp,source,ssid,rssi\n";
     }
     void log(const Measurement& m)
     {
         std::lock_guard<std::mutex> lk(mu);
-        ofs << m.timeStamp << "," << m.source << "," << m.rssi << "\n";
+        // CSV
+        ofs << m.timeStamp << "," << m.source << "," << m.ssid << "," << m.rssi << "\n";
         ofs.flush();
+        // Console
+        std::cout << m.timeStamp
+            << " | " << m.source
+            << " | " << m.ssid
+            << " | " << m.rssi << " dBm\n";
     }
 };
 
 static FileLogger logger("motion_all.csv");
 static std::atomic<bool> running{ true };
 
-// MQTT callback
+// Helper for timestamp in MQTT callback
+static std::string nowTimestamp()
+{
+    std::time_t t = std::time(nullptr);
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S",
+        std::localtime(&t));
+    return buf;
+}
+
+// MQTT message callback
 void on_message(struct mosquitto*, void*, const struct mosquitto_message* msg)
 {
     std::string topic(msg->topic);
     std::string payload((char*)msg->payload, msg->payloadlen);
-    // payload — RSSI ?????
-    double rssi = std::stod(payload);
-    Measurement m;
-    // timestamp
-    {
-        std::time_t t = std::time(nullptr);
-        char buf[64];
-        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&t));
-        m.timeStamp = buf;
-    }
-    m.source = topic;  // ????????? "motion/esp32/1"
-    m.rssi = rssi;
+    // Expect payload "SSID,RSSI"
+    auto comma = payload.find(',');
+    std::string ssid = payload.substr(0, comma);
+    double rssi = std::stod(payload.substr(comma + 1));
+    Measurement m{ nowTimestamp(), topic, ssid, rssi };
     logger.log(m);
 }
 
 int main()
 {
-    // ????????????? MQTT
+    // Initialize Mosquitto
     mosquitto_lib_init();
-    mosquitto* mosq = mosquitto_new("motion_system", true, nullptr);
+    mosquitto* mosq = mosquitto_new("motion_detector", true, nullptr);
     mosquitto_message_callback_set(mosq, on_message);
     if (mosquitto_connect(mosq, "localhost", 1883, 60) != MOSQ_ERR_SUCCESS)
     {
@@ -61,23 +70,20 @@ int main()
         return 1;
     }
     mosquitto_subscribe(mosq, nullptr, "motion/esp32/#", 0);
-    // ?????? ?????? ????????? loop
+
+    // Start MQTT loop thread
     std::thread mqttThread([&]()
     {
-        while (running)
-        {
-            mosquitto_loop(mosq, -1, 1);
-        }
+        while (running) mosquitto_loop(mosq, -1, 1);
     });
 
+    // Main scan loop
     Scanner scanner;
-    // ???????? ????: ???? + ???
     while (running)
     {
         try
         {
-            auto vec = scanner.scan();
-            for (auto& m : vec)
+            for (auto& m : scanner.scan())
             {
                 logger.log(m);
             }
@@ -89,6 +95,7 @@ int main()
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
+    // Cleanup
     mosquitto_disconnect(mosq);
     running = false;
     mqttThread.join();
