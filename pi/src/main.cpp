@@ -1,41 +1,14 @@
 #include "Scanner.h"
+#include "Logger.h"
+
 #include <mosquitto.h>
 #include <iostream>
-#include <fstream>
 #include <atomic>
 #include <thread>
-#include <mutex>
 #include <ctime>
 
-// Thread-safe CSV + console logger
-class FileLogger
-{
-    std::mutex mu;
-    std::ofstream ofs;
-public:
-    FileLogger(const std::string& fname)
-    {
-        ofs.open(fname, std::ios::out);
-        ofs << "timestamp,source,ssid,rssi\n";
-    }
-    void log(const Measurement& m)
-    {
-        std::lock_guard<std::mutex> lk(mu);
-        // CSV
-        ofs << m.timeStamp << "," << m.source << "," << m.ssid << "," << m.rssi << "\n";
-        ofs.flush();
-        // Console
-        std::cout << m.timeStamp
-            << " | " << m.source
-            << " | " << m.ssid
-            << " | " << m.rssi << " dBm\n";
-    }
-};
-
-static FileLogger logger("motion_all.csv");
 static std::atomic<bool> running{ true };
 
-// Helper for timestamp in MQTT callback
 static std::string nowTimestamp()
 {
     std::time_t t = std::time(nullptr);
@@ -45,12 +18,11 @@ static std::string nowTimestamp()
     return buf;
 }
 
-// MQTT message callback
+// MQTT callback
 void on_message(struct mosquitto*, void*, const struct mosquitto_message* msg)
 {
     std::string topic(msg->topic);
     std::string payload((char*)msg->payload, msg->payloadlen);
-    // Expect payload "SSID,RSSI"
     auto comma = payload.find(',');
     std::string ssid = payload.substr(0, comma);
     double rssi = std::stod(payload.substr(comma + 1));
@@ -60,7 +32,6 @@ void on_message(struct mosquitto*, void*, const struct mosquitto_message* msg)
 
 int main()
 {
-    // Initialize Mosquitto
     mosquitto_lib_init();
     mosquitto* mosq = mosquitto_new("motion_detector", true, nullptr);
     mosquitto_message_callback_set(mosq, on_message);
@@ -71,13 +42,12 @@ int main()
     }
     mosquitto_subscribe(mosq, nullptr, "motion/esp32/#", 0);
 
-    // Start MQTT loop thread
+    // ????? ??? loop MQTT
     std::thread mqttThread([&]()
     {
         while (running) mosquitto_loop(mosq, -1, 1);
     });
 
-    // Main scan loop
     Scanner scanner;
     while (running)
     {
@@ -95,7 +65,6 @@ int main()
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
-    // Cleanup
     mosquitto_disconnect(mosq);
     running = false;
     mqttThread.join();
