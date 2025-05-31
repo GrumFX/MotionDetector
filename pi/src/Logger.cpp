@@ -1,3 +1,7 @@
 #include "Logger.h"
 
-FileLogger logger("motion_all.csv");
+// Declare the global SQLiteDB instance (defined in main.cpp)
+extern SQLiteDB db;
+
+// Define the global FileLogger instance (writes to "log.csv")
+FileLogger logger("log.csv");
