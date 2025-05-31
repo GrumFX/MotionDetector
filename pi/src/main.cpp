@@ -2,10 +2,12 @@
 #include "Scanner.h"
 #include "Logger.h"
 #include "SQLiteDB.h"
+#include "MotionDetector.h"
 #include <mosquitto.h>
 #include <iostream>
 #include <atomic>
 #include <thread>
+#include <chrono>
 #include <ctime>
 
 static SQLiteDB db;
@@ -21,9 +23,9 @@ static std::string nowTimestamp()
     return buf;
 }
 
-// Callback for incoming MQTT messages
-void on_message(struct mosquitto*, void*, const struct mosquitto_message* msg)
+void on_message(struct mosquitto* mosq, void* user_data, const struct mosquitto_message* msg)
 {
+    // ??????????? payload ? Measurement
     std::string topic(msg->topic);
     std::string payload((char*)msg->payload, msg->payloadlen);
     auto comma = payload.find(',');
@@ -34,19 +36,24 @@ void on_message(struct mosquitto*, void*, const struct mosquitto_message* msg)
         std::stod(payload.substr(comma + 1))
     };
 
-    // 1) Log to CSV file and console
+    if (user_data)
+    {
+        auto detector = static_cast<MotionDetector*>(user_data);
+        detector->addSample(m);
+    }
+
     logger.log(m);
 
-    // 2) Insert into SQLite database
-    if (!db.insertMeasurement(m.timeStamp, m.source, m.ssid, m.rssi))
+    if (!db.saveSignal(m.timeStamp, m.source, m.ssid, m.rssi))
     {
-        std::cerr << "DB insert error (MQTT)\n";
+        std::cerr << "DB insert error (MQTT signal): "
+            << m.timeStamp << ", " << m.source
+            << ", " << m.ssid << ", RSSI=" << m.rssi << "\n";
     }
 }
 
 int main()
 {
-    // 0) Open SQLite database and initialize schema
     if (!db.open("motion_detector.db"))
     {
         std::cerr << "Cannot open SQLite DB\n";
@@ -58,10 +65,23 @@ int main()
         return 1;
     }
 
-    // 1) Initialize Mosquitto library and connect
     mosquitto_lib_init();
-    mosquitto* mosq = mosquitto_new("motion_detector", true, nullptr);
+
+
+    MotionDetector detector(30 /*seconds*/, 10.0 /*threshold*/);
+
+    mosquitto* mosq = mosquitto_new(
+        "motion_detector",
+        true,             
+        &detector         
+    );
+    if (!mosq)
+    {
+        std::cerr << "Failed to create mosquitto client\n";
+        return 1;
+    }
     mosquitto_message_callback_set(mosq, on_message);
+
     if (mosquitto_connect(mosq, "localhost", 1883, 60) != MOSQ_ERR_SUCCESS)
     {
         std::cerr << "Cannot connect to MQTT broker\n";
@@ -69,7 +89,6 @@ int main()
     }
     mosquitto_subscribe(mosq, nullptr, "motion/esp32/#", 0);
 
-    // 2) Start the MQTT network loop in a separate thread
     std::thread mqttThread([&]()
     {
         while (running)
@@ -78,20 +97,55 @@ int main()
         }
     });
 
-    // 3) Main Wi-Fi scan loop
     Scanner scanner;
+
+    std::cout << "Calibrating for " << detector.getDuration()
+        << " seconds: collecting samples from Scanner + MQTT...\n";
+
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - start
+        < std::chrono::seconds(detector.getDuration()))
+    {
+        for (auto& m : scanner.scan())
+        {
+            detector.addSample(m);
+        }
+        mosquitto_loop(mosq, 0, 1);
+    }
+
+    detector.computeAverages();
+    std::cout << "Calibration complete. Average RSSI per source:\n";
+    for (auto& [src, avg] : detector.getAverages())
+    {
+        std::cout << "  Source = " << src
+                  << "   AvgRSSI = " << avg << "\n";
+    }
+    std::cout << std::string(40, '-') << "\n";
+
     while (running)
     {
         try
         {
-            for (auto& m : scanner.scan())
+            auto batch = scanner.scan();
+            for (auto& m : batch)
             {
-                // Log to CSV and console
                 logger.log(m);
-                // Also insert into the database
-                if (!db.SaveSignal(m.timeStamp, m.source, m.ssid, m.rssi))
+                if (!db.saveSignal(m.timeStamp, m.source, m.ssid, m.rssi))
                 {
                     std::cerr << "DB insert error (scan)\n";
+                }
+                if (detector.isMovement(m))
+                {
+                    std::cout << nowTimestamp()
+                        << "  Movement! Source: " << m.source
+                        << " RSSI=" << m.rssi << "\n";
+                    if (!db.saveMotion("movement detected",
+                        m.timeStamp,
+                        m.source,
+                        m.rssi))
+                    {
+                        std::cerr << "DB insert error (motion)\n";
+                    }
                 }
             }
         }
@@ -99,10 +153,10 @@ int main()
         {
             std::cerr << "Scan error: " << e.what() << "\n";
         }
+
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
-    // 4) Clean up and exit
     mosquitto_disconnect(mosq);
     running = false;
     mqttThread.join();

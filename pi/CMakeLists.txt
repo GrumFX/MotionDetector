@@ -18,7 +18,7 @@ add_executable(motion_detector
     src/main.cpp
     src/Logger.cpp
     src/SQLiteDB.cpp
-)
+ "src/MotionDetector.cpp" "src/Measurement.h")
 
 # include directories for Mosquitto, SQLite3 and our headers
 target_include_directories(motion_detector PRIVATE
