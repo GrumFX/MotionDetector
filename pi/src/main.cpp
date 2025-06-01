@@ -10,12 +10,15 @@
 #include <chrono>
 #include <ctime>
 
+// Define the global SQLiteDB instance so Logger.cpp’s extern SQLiteDB db can link correctly.
 SQLiteDB db;
 
+// Atomic flag to control when to stop loops
 static std::atomic<bool> running{ true };
-
+// Will be set to true once computeAverages() has completed
 static std::atomic<bool> calibrated{ false };
 
+/// Return a formatted timestamp string (YYYY-MM-DD HH:MM:SS)
 static std::string nowTimestamp()
 {
     std::time_t t = std::time(nullptr);
@@ -42,11 +45,12 @@ void on_message(struct mosquitto*, void* user_data, const struct mosquitto_messa
     auto comma = payload.find(',');
     Measurement m{
         nowTimestamp(),
-        topic,                              
-        payload.substr(0, comma),           
+        topic,
+        payload.substr(0, comma),
         std::stod(payload.substr(comma + 1))
     };
 
+    // 2) Add sample to MotionDetector (whether calibrating or already calibrated)
     if (user_data)
     {
         auto detector = static_cast<MotionDetector*>(user_data);
@@ -64,8 +68,9 @@ void on_message(struct mosquitto*, void* user_data, const struct mosquitto_messa
         {
             // Print to stdout that an ESP-based movement was detected
             std::cout << nowTimestamp()
-                      << " Movement! (ESP) Source: " << m.source
-                      << " RSSI=" << m.rssi << "\n";
+                << " Movement! (ESP) Source: " << m.source
+                << " SSID: " << m.ssid
+                << " RSSI=" << m.rssi << "\n";
 
             // Save this movement event into the motions table
             if (!db.saveMotion("movement detected (ESP)", m.timeStamp, m.source, m.rssi))
@@ -78,6 +83,7 @@ void on_message(struct mosquitto*, void* user_data, const struct mosquitto_messa
 
 int main()
 {
+    // 0) Open SQLite database and initialize schema (tables: measurements, motions)
     if (!db.open("motion_detector.db"))
     {
         std::cerr << "Cannot open SQLite DB\n";
@@ -145,15 +151,23 @@ int main()
             detector.addSample(m);
             logger.log(m);
         }
+
+        // 3.2) Optionally call mosquitto_loop(mosq, 0, 1) here if you want to “pump”
+        //      any pending MQTT packets immediately. mqttThread is already running
+        //      mosquitto_loop(-1,1), so this is not strictly required.
+        mosquitto_loop(mosq, 0, 1);
     }
 
-    // 4) After 30 seconds, compute per-source average RSSI and print them
+    // 4) After 30 seconds, compute per-(source,SSID) averages and print them
     detector.computeAverages();
-    std::cout << "Calibration complete. Average RSSI per source:" << std::endl;
-    for (auto& [src, avg] : detector.getAverages())
+    std::cout << "Calibration complete. Average RSSI per (source, SSID):" << std::endl;
+    for (auto& [key, avg] : detector.getAverages())
     {
-        std::cout << "  Source = " << src
-            << "   AvgRSSI = " << avg << std::endl;
+        const auto& source = key.first;
+        const auto& ssid = key.second;
+        std::cout << "  Source = " << source
+            << "  SSID = " << ssid
+            << "  AvgRSSI = " << avg << std::endl;
     }
     std::cout << std::string(40, '-') << std::endl;
 
@@ -176,10 +190,11 @@ int main()
                 if (detector.isMovement(m))
                 {
                     std::cout << nowTimestamp()
-                              << " Movement! Source: " << m.source
-                              << " RSSI = " << m.rssi << std::endl;
+                        << " Movement! Source: " << m.source
+                        << " SSID: " << m.ssid
+                        << " RSSI = " << m.rssi << std::endl;
 
-                    // Save this Raspberry?based movement event
+                    // Save this Raspberry-based movement event
                     if (!db.saveMotion("Movement detected", m.timeStamp, m.source, m.rssi))
                     {
                         std::cerr << "DB insert error (motion for Raspberry)" << std::endl;
@@ -188,12 +203,11 @@ int main()
             }
 
             /**
-             * 6.2) Any incoming ESP messages will be handled asynchronously by on_message()
-             *      in the background mqttThread. Since on_message() now checks isMovement(m)
-             *      once calibrated == true, you do not need to do anything else here
-             *      for ESP-based movement. If you *wanted* to “force” an immediate poll
-             *      of pending network I/O, you could call mosquitto_loop(mosq,0,1) here,
-             *      but mqttThread is already running mosquitto_loop(-1), so it’s optional.
+             * 6.2) Any incoming ESP messages are handled asynchronously by on_message()
+             *      in the background mqttThread. Since calibrated == true, on_message()
+             *      will check ESP samples for movement and save them if needed.
+             *      You can optionally call mosquitto_loop(mosq, 0, 1) here to “pump” the
+             *      network I/O, but mqttThread already runs mosquitto_loop(-1,1).
              */
         }
         catch (const std::exception& e)
