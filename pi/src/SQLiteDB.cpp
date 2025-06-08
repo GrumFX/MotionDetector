@@ -27,6 +27,7 @@ bool SQLiteDB::initSchema()
           note      TEXT    NOT NULL,
           timestamp TEXT    NOT NULL,
           source    TEXT    NOT NULL,
+          ssid    TEXT    NOT NULL,
           rssi      REAL    NOT NULL
         );
     )sql";
@@ -74,21 +75,25 @@ bool SQLiteDB::insertMeasurement(const std::string& timestamp,
 bool SQLiteDB::saveMotion(const std::string& note,
     const std::string& timestamp,
     const std::string& source,
-    double              rssi)
+    const std::string& ssid,
+    double rssi)
 {
     const char* sql =
-        "INSERT INTO motions(note, timestamp, source, rssi) "
-        "VALUES (?, ?, ?, ?);";
+        "INSERT INTO motions(note, timestamp, source, ssid, rssi) "
+        "VALUES (?, ?, ?, ?, ?);";
+
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK)
     {
         std::cerr << "Prepare motion failed: " << sqlite3_errmsg(db_) << "\n";
         return false;
     }
+
     sqlite3_bind_text(stmt, 1, note.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, timestamp.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 3, source.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_double(stmt, 4, rssi);
+    sqlite3_bind_text(stmt, 4, ssid.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_double(stmt, 5, rssi);
 
     if (sqlite3_step(stmt) != SQLITE_DONE)
     {
@@ -96,9 +101,11 @@ bool SQLiteDB::saveMotion(const std::string& note,
         sqlite3_finalize(stmt);
         return false;
     }
+
     sqlite3_finalize(stmt);
     return true;
 }
+
 
 bool SQLiteDB::readSignal(const std::string& from,
     const std::string& to,

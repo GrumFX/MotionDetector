@@ -46,7 +46,8 @@ public:
     bool saveMotion(const std::string& note,
         const std::string& timestamp,
         const std::string& source,
-        double              rssi);
+        const std::string& ssid,
+        double             rssi);
 
     bool readMotion(const std::string& from,
         const std::string& to,
