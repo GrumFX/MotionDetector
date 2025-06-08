@@ -4,6 +4,7 @@
 #include "SQLiteDB.h"
 #include "MotionDetector.h"
 #include <mosquitto.h>
+#include "WebServer.h"
 #include <iostream>
 #include <atomic>
 #include <thread>
@@ -73,7 +74,7 @@ void on_message(struct mosquitto*, void* user_data, const struct mosquitto_messa
                 << " RSSI=" << m.rssi << "\n";
 
             // Save this movement event into the motions table
-            if (!db.saveMotion("movement detected (ESP)", m.timeStamp, m.source, m.rssi))
+            if (!db.saveMotion("movement detected (ESP)", m.timeStamp, m.source, m.ssid, m.rssi))
             {
                 std::cerr << "DB insert error (motion for ESP)\n";
             }
@@ -89,6 +90,8 @@ int main()
         std::cerr << "Cannot open SQLite DB\n";
         return 1;
     }
+    // Initialize the schema (create tables if they do not exist)
+    db.initSchema();
     if (!db.initSchema())
     {
         std::cerr << "Cannot initialize DB schema\n";
@@ -135,6 +138,8 @@ int main()
     });
 
     Scanner scanner;
+    std::thread webserverThread(start_webserver);
+    webserverThread.detach(); // Detach web server thread to run in background
 
     // ---- 3) CALIBRATION: Collect samples from both Scanner (Raspberry) and MQTT (ESP) for 30 seconds ----
     std::cout << "Calibrating for " << detector.getDuration()
@@ -195,7 +200,7 @@ int main()
                         << " RSSI = " << m.rssi << std::endl;
 
                     // Save this Raspberry-based movement event
-                    if (!db.saveMotion("Movement detected", m.timeStamp, m.source, m.rssi))
+                    if (!db.saveMotion("Movement detected", m.timeStamp, m.source, m.ssid, m.rssi))
                     {
                         std::cerr << "DB insert error (motion for Raspberry)" << std::endl;
                     }
@@ -215,7 +220,6 @@ int main()
             std::cerr << "Scan error: " << e.what() << std::endl;
         }
 
-        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
     // ---- 7) CLEANUP AND EXIT ----
