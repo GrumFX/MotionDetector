@@ -2,10 +2,10 @@
 #include <PubSubClient.h>
 
 // 1) Home Wi-Fi credentials
-const char* ssidAP     = "Starlink";
+const char* ssidAP     = "ASUS AX6000";
 const char* passwordAP = "159632487";
 // 2) Raspberry Pi IP on LAN
-const char* mqttServer = "192.168.1.187";
+const char* mqttServer = "192.168.50.57";
 
 WiFiClient   espClient;
 PubSubClient mqtt(espClient);
@@ -39,16 +39,19 @@ void setup() {
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) connectWiFi();
-  if (!mqtt.connected())       connectMQTT();
+  if (!mqtt.connected())             connectMQTT();
   mqtt.loop();
 
-  long rssi = WiFi.RSSI();
-  String ssid = WiFi.SSID();
-  // payload = "SSID,RSSI"
-  String payload = ssid + "," + String(rssi);
-  bool ok = mqtt.publish("motion/esp32/1", payload.c_str());
-  Serial.printf("%s | RSSI=%ld dBm | %s\n",
-                ssid.c_str(), rssi, ok?"Pub OK":"Pub FAIL");
+  Serial.println("Scanning Wi-Fi networks…");
+  int n = WiFi.scanNetworks();
 
-  delay(500);
+  for (int i = 0; i < n; ++i) {
+    String ssid = WiFi.SSID(i);
+    int rssi = WiFi.RSSI(i);
+    String payload = ssid + "," + String(rssi);
+    bool ok = mqtt.publish("motion/esp32/scan", payload.c_str());
+    Serial.printf("Sent: %s | %s\n", payload.c_str(), ok ? "OK" : "FAIL");
+  }
+
+  WiFi.scanDelete(); // Clear memory
 }
