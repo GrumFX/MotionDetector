@@ -53,7 +53,7 @@ std::string sanitizeSSID(const std::string& ssid)
     return escapeString(ssid);
 }
 
-std::string buildHTMLPage(const std::string& from, const std::string& to, const std::vector<Measurement>& measurements, const std::vector<Motion>& motions, const std::string& displayMode)
+std::string buildHTMLPage(const std::string& from, const std::string& to, const std::vector<Measurement>& measurements, const std::vector<Motion>& motions, const std::string& mode)
 {
     std::ostringstream html;
 
@@ -63,7 +63,7 @@ std::string buildHTMLPage(const std::string& from, const std::string& to, const 
     <head>
         <meta charset="UTF-8">
         <title>Motion Detector</title>
-        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>       
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>    
         <style>
             body {
                 font-family: Arial, sans-serif;
@@ -122,9 +122,9 @@ std::string buildHTMLPage(const std::string& from, const std::string& to, const 
             <label>Display:
                 <select name="mode" onchange="updateChart();">
                     <option value="all" )HTML"
-        << (displayMode == "all" ? "selected" : "") << R"HTML(>All Measurements</option>
+        << (mode == "all" ? "selected" : "") << R"HTML(>All Measurements</option>
                     <option value="motion" )HTML"
-        << (displayMode == "motion" ? "selected" : "") << R"HTML(>Motion Only</option>
+        << (mode == "motion" ? "selected" : "") << R"HTML(>Motion Only</option>
                 </select>
             </label>
             <label>Filter SSID:
@@ -154,24 +154,30 @@ std::string buildHTMLPage(const std::string& from, const std::string& to, const 
     std::vector<std::string> combinedData;
     for (const auto& m : measurements)
     {
+        // Ensure timeStamp is in the correct format
         if (m.timeStamp.size() != 19 || m.timeStamp[10] != ' ' || m.timeStamp[13] != ':' || m.timeStamp[16] != ':')
         {
             continue; // Skip invalid entries
         }
 
+        // Sanitize and escape SSID
         std::string sanitizedSSID = sanitizeSSID(m.ssid);
+
         combinedData.push_back("{ time: '" + m.timeStamp + "', ssid: '" + sanitizedSSID
             + "', source: '" + m.source + "', rssi: " + std::to_string(m.rssi) + " },");
     }
 
     for (const auto& m : motions)
     {
+        // Ensure timeStamp is in the correct format
         if (m.timeStamp.size() != 19 || m.timeStamp[10] != ' ' || m.timeStamp[13] != ':' || m.timeStamp[16] != ':')
         {
             continue; // Skip invalid entries
         }
 
+        // Sanitize and escape SSID
         std::string sanitizedSSID = sanitizeSSID(m.ssid);
+
         combinedData.push_back("{ time: '" + m.timeStamp + "', ssid: '" + sanitizedSSID
             + "', source: '" + m.source + "', rssi: " + std::to_string(m.rssi) + " },");
     }
@@ -325,23 +331,29 @@ void start_webserver()
 
         if (mode == "motion")
         {
-            // Don't show regular measurements
+            // Show only motion-related data
             db.readMotion(from, to, motions);
         }
         else
         {
-            // Default: show both signals and motion events
+            // Default: Show both signals and motion events
             db.readSignal(from, to, measurements);
             db.readMotion(from, to, motions);
         }
 
-        std::cout << "motions size: " << motions.size() << std::endl;
+        std::cout << "Measurements size: " << measurements.size() << std::endl;
+        for (const auto& m : measurements)
+        {
+            std::cout << "Time: " << m.timeStamp << ", SSID: " << m.ssid << ", RSSI: " << m.rssi << std::endl;
+        }
+
+        std::cout << "Motions size: " << motions.size() << std::endl;
         for (const auto& m : motions)
         {
             std::cout << "Time: " << m.timeStamp << ", Sourse: " << m.source << ", SSID: " << m.ssid << ", RSSI: " << m.rssi << std::endl;
         }
 
-        return crow::response{ buildHTMLPage(from, to, measurements, motions) };
+        return crow::response{ buildHTMLPage(from, to, measurements, motions, mode) };
     });
 
     std::cout << "Web server running at http://<IP>:9002/" << std::endl;
