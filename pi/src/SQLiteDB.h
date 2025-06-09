@@ -11,6 +11,7 @@ struct Motion
     std::string note;
     std::string timeStamp;
     std::string source;
+    std::string ssid;
     double      rssi;
 };
 

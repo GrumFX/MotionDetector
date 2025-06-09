@@ -143,7 +143,7 @@ bool SQLiteDB::readMotion(const std::string& from,
     std::vector<Motion>& out)
 {
     const char* sql =
-        "SELECT note, timestamp, source, rssi "
+        "SELECT note, timestamp, source, ssid, rssi "
         "FROM motions "
         "WHERE timestamp BETWEEN ? AND ? "
         "ORDER BY timestamp;";
@@ -162,7 +162,8 @@ bool SQLiteDB::readMotion(const std::string& from,
         mm.note = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
         mm.timeStamp = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
         mm.source = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        mm.rssi = sqlite3_column_double(stmt, 3);
+        mm.ssid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+        mm.rssi = sqlite3_column_double(stmt, 4);
         out.push_back(mm);
     }
     sqlite3_finalize(stmt);
